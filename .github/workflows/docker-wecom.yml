@@ -1,0 +1,128 @@
+name: Build WeCom Selkies Docker Image (AMD64)
+
+on:
+  workflow_dispatch:
+    inputs:
+      push:
+        description: Push image to GHCR
+        type: boolean
+        default: true
+      tag:
+        description: Image tag (e.g. wecom-latest or wecom-edge)
+        type: string
+        default: wecom-latest
+  push:
+    branches:
+      - feature/wecom-deepin-wine
+    paths:
+      - 'wecom/**'
+      - '.github/workflows/docker-wecom.yml'
+
+concurrency:
+  group: docker-wecom-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build-wecom:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v6
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Resolve lowercase image reference
+        id: meta
+        shell: bash
+        run: |
+          repo="${GITHUB_REPOSITORY,,}"
+          should_push="true"
+          tag="wecom-edge"
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            should_push="${{ inputs.push }}"
+            tag="${{ inputs.tag }}"
+          fi
+          echo "repo=$repo" >> "$GITHUB_OUTPUT"
+          echo "should_push=$should_push" >> "$GITHUB_OUTPUT"
+          echo "image=ghcr.io/${repo}:${tag}" >> "$GITHUB_OUTPUT"
+
+      - name: Login to GitHub Container Registry
+        if: steps.meta.outputs.should_push == 'true'
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push WeCom Docker image (linux/amd64)
+        id: build
+        uses: docker/build-push-action@v5
+        with:
+          context: ./wecom
+          file: ./wecom/Dockerfile
+          platforms: linux/amd64
+          push: ${{ steps.meta.outputs.should_push == 'true' }}
+          tags: ${{ steps.meta.outputs.image }}
+          cache-from: type=gha,scope=wecom
+          cache-to: type=gha,mode=max,scope=wecom
+
+      - name: Smoke test WeCom container on native x86_64
+        if: steps.meta.outputs.should_push == 'true'
+        shell: bash
+        env:
+          TEST_IMAGE: ${{ steps.meta.outputs.image }}
+        run: |
+          set -euo pipefail
+          docker pull --platform linux/amd64 "$TEST_IMAGE"
+          tmp_cfg="$(mktemp -d)"
+          chmod 777 "$tmp_cfg"
+          trap 'docker rm -f wecom-smoke >/dev/null 2>&1 || true; rm -rf "$tmp_cfg"' EXIT
+          docker run -d --name wecom-smoke --platform linux/amd64 --shm-size=2gb \
+            -p 13001:3001 -v "$tmp_cfg:/config" \
+            -e PUID=1000 -e PGID=100 -e CUSTOM_USER=abc -e PASSWORD=smoketest \
+            -e AUTO_START_WECOM=true "$TEST_IMAGE"
+          code=""
+          for _ in $(seq 1 30); do
+            code="$(curl -sk -o /dev/null -w '%{http_code}' -u abc:smoketest https://127.0.0.1:13001/ || true)"
+            if [[ "$code" == "200" ]]; then
+              break
+            fi
+            sleep 2
+          done
+          echo "Web UI HTTP status: $code"
+          [[ "$code" == "200" ]]
+
+          found="false"
+          for _ in $(seq 1 90); do
+            if docker exec wecom-smoke bash -c "test -f /config/.deepinwine/Deepin-WXWork/PACKAGE_VERSION && ps -eo pid,comm,args | grep -i 'WXWork\.exe' | grep -v 'run_v4\.sh' | grep -v grep"; then
+              echo "WXWork.exe is running on native x86_64!"
+              found="true"
+              break
+            fi
+            sleep 2
+          done
+          echo "=== wecom-start.log ==="
+          docker exec wecom-smoke bash -c 'cat /tmp/wecom-start.log 2>/dev/null || true'
+          echo "=== glprobe.log ==="
+          docker exec wecom-smoke bash -c 'cat /config/.deepinwine/Deepin-WXWork/.glprobe.log 2>/dev/null || true'
+          echo "=== user symlinks ==="
+          docker exec wecom-smoke bash -c 'ls -la /config/.deepinwine/Deepin-WXWork/drive_c/users/abc/ 2>/dev/null || true'
+          echo "=== X11 windows ==="
+          docker exec -u abc -e DISPLAY=:1 wecom-smoke bash -c 'xwininfo -root -tree 2>/dev/null | head -n 40 || true'
+          [[ "$found" == "true" ]]
+
+      - name: Write build summary
+        shell: bash
+        run: |
+          {
+            echo "## WeCom Selkies (Deepin-Wine · AMD64)"
+            echo ""
+            echo "- Image: \`${{ steps.meta.outputs.image }}\`"
+            echo "- Digest: \`${{ steps.build.outputs.digest }}\`"
+            echo "- Pushed: \`${{ steps.meta.outputs.should_push }}\`"
+          } >> "$GITHUB_STEP_SUMMARY"
