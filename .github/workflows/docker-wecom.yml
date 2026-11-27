@@ -81,7 +81,7 @@ jobs:
           docker pull --platform linux/amd64 "$TEST_IMAGE"
           tmp_cfg="$(mktemp -d)"
           chmod 777 "$tmp_cfg"
-          trap 'docker rm -f wecom-smoke >/dev/null 2>&1 || true; rm -rf "$tmp_cfg"' EXIT
+          trap 'docker rm -f wecom-smoke >/dev/null 2>&1 || true; sudo rm -rf "$tmp_cfg" || true' EXIT
           docker run -d --name wecom-smoke --platform linux/amd64 --shm-size=2gb \
             -p 13001:3001 -v "$tmp_cfg:/config" \
             -e PUID=1000 -e PGID=100 -e CUSTOM_USER=abc -e PASSWORD=smoketest \
