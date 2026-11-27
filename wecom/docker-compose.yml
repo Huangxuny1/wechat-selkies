@@ -1,0 +1,35 @@
+---
+services:
+  wecom-selkies:
+    platform: linux/amd64
+    build:
+      context: .
+      args:
+        INSTALL_PCMANFM: ${INSTALL_PCMANFM:-true}
+    image: wecom-selkies:latest
+    container_name: wecom-selkies
+    hostname: ${WECOM_HOSTNAME:-}
+    volumes:
+      - ./config:/config
+    # Optional GPU acceleration
+    # devices:
+    #   - /dev/dri:/dev/dri
+    ports:
+      - "${HTTP_PORT:-3000}:3000"       # http port
+      - "${HTTPS_PORT:-3001}:3001"      # https port
+    restart: unless-stopped
+    environment:
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-100}
+      - TITLE=${TITLE:-WeCom-Selkies}
+      - CUSTOM_USER=${CUSTOM_USER:-abc}
+      - PASSWORD=${PASSWORD:-}
+      - TZ=${TZ:-Asia/Shanghai}
+      - LANG=${LANG:-zh_CN.UTF-8}
+      - LC_ALL=${LC_ALL:-zh_CN.UTF-8}
+      - AUTO_START_WECOM=${AUTO_START_WECOM:-true}
+      - WECOM_DPI=${WECOM_DPI:-}
+      - ENABLE_WECOM_NIGHTLY_RESTART=${ENABLE_WECOM_NIGHTLY_RESTART:-false}
+      - WECOM_NIGHTLY_STOP_TIME=${WECOM_NIGHTLY_STOP_TIME:-23:30}
+      - WECOM_NIGHTLY_START_TIME=${WECOM_NIGHTLY_START_TIME:-01:30}
+    shm_size: "${SHM_SIZE:-2gb}"        # recommended for Wine + WeCom CEF modules

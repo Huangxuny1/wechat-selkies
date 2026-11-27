@@ -1,4 +1,5 @@
 /config/
+/wecom/config/
 .env
 __pycache__/
 *.pyc
